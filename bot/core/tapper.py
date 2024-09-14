@@ -295,7 +295,7 @@ class Tapper:
                         if result:
                             if result:
                                 logger.info(f"{self.session_name} | Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>")
-                await asyncio.sleep(delay=5)
+                    await asyncio.sleep(delay=5)
                 await http_client.close()
                 if proxy_conn:
                     if not proxy_conn.closed:

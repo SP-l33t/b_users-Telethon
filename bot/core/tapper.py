@@ -10,6 +10,7 @@ from better_proxy import Proxy
 from pyrogram import Client
 from pyrogram.errors import Unauthorized, UserDeactivated, AuthKeyUnregistered, FloodWait
 from pyrogram.raw.functions.messages import RequestAppWebView
+from pyrogram.errors import UsernameNotOccupied
 from pyrogram.raw.functions import account
 from pyrogram.raw.types import InputBotAppShortName, InputNotifyPeer, InputPeerNotifySettings
 from .agents import generate_random_user_agent
@@ -134,43 +135,47 @@ class Tapper:
         return await self.make_request(http_client, 'GET', endpoint="/users/me")
     
     
+    @error_handler
     async def join_and_mute_tg_channel(self, link: str):
-        link = link if 'https://t.me/+' in link else link.replace('https://t.me/', "")
+        await asyncio.sleep(delay=15)
+        if link.startswith('https://t.me/+') or link.startswith('t.me/+'):
+            invite_hash = link.split('/')[-1]
+        else:
+            link = link.replace('https://t.me/', "")
+        
         if not self.tg_client.is_connected:
-            try:
-                await self.tg_client.connect()
-            except Exception as error:
-                logger.error(f"{self.session_name} | (Task) Connect failed: {error}")
-        try:
-            chat = await self.tg_client.get_chat(link)
-            chat_username = chat.username if chat.username else link
-            chat_id = chat.id
-            try:
-                await self.tg_client.get_chat_member(chat_username, "me")
-            except Exception as error:
-                if error.ID == 'USER_NOT_PARTICIPANT':
-                    await asyncio.sleep(delay=3)
-                    response = await self.tg_client.join_chat(link)
-                    logger.info(f"{self.session_name} | Joined to channel: <lc>{response.username}</lc>")
-                    
-                    try:
-                        peer = await self.tg_client.resolve_peer(chat_id)
-                        await self.tg_client.invoke(account.UpdateNotifySettings(
-                            peer=InputNotifyPeer(peer=peer),
-                            settings=InputPeerNotifySettings(mute_until=2147483647)
-                        ))
-                        logger.info(f"{self.session_name} | Successfully muted chat <lc>{chat_username}</lc>")
-                    except Exception as e:
-                        logger.info(f"{self.session_name} | (Task) Failed to mute chat <lc>{chat_username}</lc>: {str(e)}")
-                    
-                    
-                else:
-                    logger.error(f"{self.session_name} | (Task) Error while checking TG group: <lc>{chat_username}</lc>")
+            await self.tg_client.connect()
 
-            if self.tg_client.is_connected:
-                await self.tg_client.disconnect()
-        except Exception as error:
-            logger.error(f"{self.session_name} | (Task) Error while join tg channel: {error}")
+        if 'invite_hash' in locals():
+            chat = await self.tg_client.join_chat(invite_hash)
+        else:
+            try:
+                chat = await self.tg_client.get_chat(link)
+            except UsernameNotOccupied:
+                logger.warning(f"{self.session_name} | Channel {link} does not exist or username is not occupied. Skipping.")
+                return
+            except Exception:
+                chat = await self.tg_client.join_chat(link)
+        
+        chat_username = chat.username if chat.username else link
+        chat_id = chat.id
+
+        try:
+            await self.tg_client.get_chat_member(chat_id, "me")
+            logger.info(f"{self.session_name} | Already a member of {chat_username}")
+        except Exception:
+            response = await self.tg_client.join_chat(invite_hash if 'invite_hash' in locals() else link)
+            logger.info(f"{self.session_name} | Joined channel: <y>{response.title}</y>")
+
+        peer = await self.tg_client.resolve_peer(chat_id)
+        await self.tg_client.invoke(account.UpdateNotifySettings(
+            peer=InputNotifyPeer(peer=peer),
+            settings=InputPeerNotifySettings(mute_until=2147483647)
+        ))
+        logger.info(f"{self.session_name} | Successfully muted chat <y>{chat_username}</y>")
+
+        if self.tg_client.is_connected:
+            await self.tg_client.disconnect()
             
     
     @error_handler

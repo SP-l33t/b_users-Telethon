@@ -137,45 +137,44 @@ class Tapper:
     
     @error_handler
     async def join_and_mute_tg_channel(self, link: str):
-        await asyncio.sleep(delay=15)
-        if link.startswith('https://t.me/+') or link.startswith('t.me/+'):
-            invite_hash = link.split('/')[-1]
-        else:
-            link = link.replace('https://t.me/', "")
+        await asyncio.sleep(delay=random.randint(15, 30))
         
         if not self.tg_client.is_connected:
             await self.tg_client.connect()
-
-        if 'invite_hash' in locals():
-            chat = await self.tg_client.join_chat(invite_hash)
-        else:
-            try:
-                chat = await self.tg_client.get_chat(link)
-            except UsernameNotOccupied:
-                logger.warning(f"{self.session_name} | Channel {link} does not exist or username is not occupied. Skipping.")
-                return
-            except Exception:
-                chat = await self.tg_client.join_chat(link)
-        
-        chat_username = chat.username if chat.username else link
-        chat_id = chat.id
-
+            
+        parsed_link = link if 'https://t.me/+' in link else link[13:]
         try:
-            await self.tg_client.get_chat_member(chat_id, "me")
-            logger.info(f"{self.session_name} | Already a member of {chat_username}")
-        except Exception:
-            response = await self.tg_client.join_chat(invite_hash if 'invite_hash' in locals() else link)
-            logger.info(f"{self.session_name} | Joined channel: <y>{response.title}</y>")
+            try:
+                chat = await self.tg_client.join_chat(parsed_link)
+                logger.info(f"{self.session_name} | Successfully joined chat <b>{chat.title}</b>")
+            except Exception as join_error:
+                if "USER_ALREADY_PARTICIPANT" in str(join_error):
+                    logger.info(f"{self.session_name} | Already a member of the chat: {link}")
+                    chat = await self.tg_client.get_chat(parsed_link)
+                else:
+                    
+                    raise join_error
 
-        peer = await self.tg_client.resolve_peer(chat_id)
-        await self.tg_client.invoke(account.UpdateNotifySettings(
-            peer=InputNotifyPeer(peer=peer),
-            settings=InputPeerNotifySettings(mute_until=2147483647)
-        ))
-        logger.info(f"{self.session_name} | Successfully muted chat <y>{chat_username}</y>")
+            chat_id = chat.id
+            chat_title = getattr(chat, 'title', link)
 
-        if self.tg_client.is_connected:
-            await self.tg_client.disconnect()
+            await asyncio.sleep(random.randint(5, 10))
+
+            peer = await self.tg_client.resolve_peer(chat_id)
+            await self.tg_client.invoke(account.UpdateNotifySettings(
+                peer=InputNotifyPeer(peer=peer),
+                settings=InputPeerNotifySettings(mute_until=2147483647)
+            ))
+            logger.info(f"{self.session_name} | Successfully muted chat <b>{chat_title}</b>")
+
+        except Exception as e:
+            logger.error(f"{self.session_name} | Error joining/muting channel {link}: {str(e)}")
+
+        finally:
+            if self.tg_client.is_connected:
+                await self.tg_client.disconnect()
+
+        await asyncio.sleep(random.randint(10, 20))
             
     
     @error_handler
@@ -283,7 +282,7 @@ class Tapper:
                 logger.info(f"{self.session_name} | Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>")
                 tasks = await self.get_task(http_client=http_client)
                 for task in tasks.get('response', {}):
-                    if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG"]:
+                    if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET"]:
                         logger.info(f"{self.session_name} | Performing task <lc>{task['taskName']}</lc>...")
                         if task.get('type') == 'REGEX_STRING':
                             result = await self.add_gem_last_name(http_client=http_client, task_id=task['uuid'])

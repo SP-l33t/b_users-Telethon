@@ -19,7 +19,7 @@ from .agents import generate_random_user_agent
 from bot.config import settings
 from typing import Callable
 from time import time
-from bot.utils import logger, proxy_utils, config_utils
+from bot.utils import logger, log_error, proxy_utils, config_utils, CONFIG_PATH
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
@@ -39,7 +39,7 @@ class Tapper:
     def __init__(self, tg_client: TelegramClient):
         self.tg_client = tg_client
         self.session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        self.config = config_utils.get_session_config(self.session_name)
+        self.config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
         self.proxy = self.config.get('proxy', None)
         self.tg_web_data = None
         self.tg_client_id = 0
@@ -47,12 +47,15 @@ class Tapper:
         self.headers['User-Agent'] = self.check_user_agent()
         self.headers.update(**get_sec_ch_ua(self.headers.get('User-Agent', '')))
 
+    def log_message(self, message) -> str:
+        return f"<light-yellow>{self.session_name}</light-yellow> | {message}"
+
     def check_user_agent(self):
         user_agent = self.config.get('user_agent')
         if not user_agent:
             user_agent = generate_random_user_agent()
             self.config['user_agent'] = user_agent
-            config_utils.update_config_file(self.session_name, self.config)
+            config_utils.update_config_file(self.session_name, self.config, CONFIG_PATH)
 
         return user_agent
 
@@ -84,8 +87,8 @@ class Tapper:
                 except FloodWaitError as fl:
                     fls = fl.seconds
 
-                    logger.warning(f"{self.session_name} | FloodWait {fl}")
-                    logger.info(f"{self.session_name} | Sleep {fls}s")
+                    logger.warning(self.log_message(f"FloodWait {fl}"))
+                    logger.info(self.log_message(f"Sleep {fls}s"))
                     await asyncio.sleep(fls + 3)
 
             ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "ref-4LKnoTn1gnxdSFUDGoyBLr"
@@ -130,7 +133,7 @@ class Tapper:
             return None
 
         except Exception as error:
-            logger.error(f"{self.session_name} | Unknown error: {error}")
+            log_error(self.log_message(f"Unknown error: {error}"))
             return None
 
     @error_handler
@@ -161,17 +164,17 @@ class Tapper:
                 try:
                     invite_hash = path[1:]
                     result = await client(messages.ImportChatInviteRequest(hash=invite_hash))
-                    logger.info(f"{self.session_name} | Joined to channel: <y>{result.chats[0].title}</y>")
+                    logger.info(self.log_message(f"Joined to channel: <y>{result.chats[0].title}</y>"))
                     await asyncio.sleep(random.uniform(10, 20))
 
                 except Exception as e:
-                    logger.error(f"{self.session_name} | (Task) Error while join tg channel: {e}")
+                    log_error(self.log_message(f"(Task) Error while join tg channel: {e}"))
             else:
                 try:
                     await client(channels.JoinChannelRequest(channel=f'@{path}'))
-                    logger.info(f"{self.session_name} | Joined to channel: <y>{link}</y>")
+                    logger.info(self.log_message(f"Joined to channel: <y>{link}</y>"))
                 except Exception as e:
-                    logger.error(f"{self.session_name} | (Task) Error while join tg channel: {e}")
+                    log_error(self.log_message(f"(Task) Error while join tg channel: {e}"))
 
     @error_handler
     async def add_gem_last_name(self, http_client: aiohttp.ClientSession, task_id: str):
@@ -179,7 +182,7 @@ class Tapper:
             try:
                 await self.tg_client.connect()
             except Exception as error:
-                logger.error(f"{self.session_name} | (Gem) Connect failed: {error}")
+                log_error(self.log_message(f"(Gem) Connect failed: {error}"))
 
         me = await self.tg_client.get_me()
         await self.tg_client(account.UpdateProfileRequest(last_name=f"{me.last_name} 💎"))
@@ -204,16 +207,16 @@ class Tapper:
         try:
             response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(5))
             ip = (await response.json()).get('origin')
-            logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Proxy IP: {ip}")
+            logger.info(self.log_message(f"Proxy IP: {ip}"))
             return True
         except Exception as error:
-            logger.error(f"<light-yellow>{self.session_name}</light-yellow> | Proxy: {proxy} | Error: {error}")
+            log_error(self.log_message(f"Proxy: {proxy} | Error: {error}"))
             return False
 
     async def run(self) -> None:
         if settings.USE_RANDOM_DELAY_IN_RUN:
             random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-            logger.info(f"{self.session_name} | Bot will start in <lc>{random_delay}s</lc>")
+            logger.info(self.log_message(f"Bot will start in <lc>{random_delay}s</lc>"))
             await asyncio.sleep(random_delay)
 
         proxy_conn = None
@@ -248,16 +251,16 @@ class Tapper:
 
                 login = await self.login(http_client=http_client, init_data=init_data)
                 if not login:
-                    logger.info(f"{self.session_name} | 💎 <lc>Login failed</lc>")
+                    logger.info(self.log_message(f"💎 <lc>Login failed</lc>"))
                     await asyncio.sleep(300)
-                    logger.info(f"{self.session_name} | Sleep <lc>300s</lc>")
+                    logger.info(self.log_message(f"Sleep <lc>300s</lc>"))
                     continue
 
                 if login.get('response', {}).get('isNewUser', False):
-                    logger.info(f'{self.session_name} | 💎 <lc>User registered!</lc>')
+                    logger.info(self.log_message(f'💎 <lc>User registered!</lc>'))
 
                 accessToken = login.get('response', {}).get('accessToken')
-                logger.info(f"{self.session_name} | 💎 <lc>Login successful</lc>")
+                logger.info(self.log_message(f"💎 <lc>Login successful</lc>"))
 
                 http_client.headers["Authorization"] = f"Bearer {accessToken}"
                 user_data = await self.info(http_client=http_client)
@@ -272,26 +275,26 @@ class Tapper:
                     time_ = time_left_formatted
                 hours, minutes, seconds = time_.split(':')
                 formatted_time = f"{days[:-1]}d{hours}h {minutes}m {seconds}s"
-                logger.info(
-                    f"{self.session_name} | Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>")
+                logger.info(self.log_message(
+                    f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>"))
                 tasks = await self.get_task(http_client=http_client)
                 for task in tasks.get('response', {}):
                     if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG"]:
-                        logger.info(f"{self.session_name} | Performing task <lc>{task['taskName']}</lc>...")
+                        logger.info(self.log_message(f"Performing task <lc>{task['taskName']}</lc>..."))
                         if task.get('type') == 'REGEX_STRING':
                             result = await self.add_gem_last_name(http_client=http_client, task_id=task['uuid'])
                             if result:
-                                logger.info(f"{self.session_name} | Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>")
+                                logger.info(self.log_message(f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                             continue
 
                         if task.get('type') == 'SUBSCRIPTION_TG':
-                            logger.info(f"{self.session_name} | Performing TG subscription to <lc>{task['link']}</lc>")
+                            logger.info(self.log_message(f"Performing TG subscription to <lc>{task['link']}</lc>"))
                             await self.join_and_mute_tg_channel(task['link'])
 
                         result = await self.done_task(http_client=http_client, task_id=task['uuid'])
                         if result:
-                            logger.info(
-                                f"{self.session_name} | Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>")
+                            logger.info(self.log_message(
+                                f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                     await asyncio.sleep(delay=5)
                 await http_client.close()
                 if proxy_conn:
@@ -302,17 +305,17 @@ class Tapper:
                 raise error
 
             except Exception as error:
-                logger.error(f"{self.session_name} | Unknown error: {error}")
+                log_error(self.log_message(f"Unknown error: {error}"))
                 await asyncio.sleep(delay=3)
 
             sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-            logger.info(f"{self.session_name} | Sleep <lc>{sleep_time}s</lc>")
+            logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
             await asyncio.sleep(delay=sleep_time)
 
 
 async def run_tapper(tg_client: TelegramClient):
     try:
         await Tapper(tg_client=tg_client).run()
-    except InvalidSession:
+    except InvalidSession as e:
         session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        logger.error(f"{session_name} | Invalid Session")
+        logger.error(f"<light-yellow>{session_name}</light-yellow> | Invalid Session: {e}")

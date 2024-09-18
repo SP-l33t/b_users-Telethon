@@ -129,7 +129,8 @@ class Tapper:
 
             if self.tg_client.is_connected():
                 await self.tg_client.disconnect()
-                self.lock.release()
+                if self.lock.acquired:
+                    self.lock.release()
 
             return init_data
 
@@ -197,7 +198,8 @@ class Tapper:
         await self.tg_client(account.UpdateProfileRequest(last_name=me.last_name))
         if self.tg_client.is_connected():
             await self.tg_client.disconnect()
-            self.lock.release()
+            if self.lock.acquired:
+                self.lock.release()
 
         return result
 
@@ -326,5 +328,6 @@ async def run_tapper(tg_client: TelegramClient):
     except InvalidSession as e:
         logger.error(runner.log_message(f"Invalid Session: {e}"))
     finally:
-        runner.lock.release()
+        if runner.lock.acquired:
+            runner.lock.release()
 

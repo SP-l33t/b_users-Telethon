@@ -295,7 +295,7 @@ class Tapper:
                                 logger.info(self.log_message(f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                             continue
 
-                        if task.get('type') == 'SUBSCRIPTION_TG':
+                        if task.get('type') == 'SUBSCRIPTION_TG' and settings.SUBSCRIBE_CHANNEL_TASKS:
                             logger.info(self.log_message(f"Performing TG subscription to <lc>{task['link']}</lc>"))
                             await self.join_and_mute_tg_channel(task['link'])
 

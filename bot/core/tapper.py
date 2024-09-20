@@ -239,16 +239,17 @@ class Tapper:
         else:
             http_client = CloudflareScraper(headers=self.headers)
 
-        init_data = await self.get_tg_web_data()
-
-        if not init_data:
-            if not http_client.closed:
-                await http_client.close()
-            if proxy_conn and not proxy_conn.closed:
-                proxy_conn.close()
-            return
-
         while True:
+
+            init_data = await self.get_tg_web_data()
+
+            if not init_data:
+                if not http_client.closed:
+                    await http_client.close()
+                if proxy_conn and not proxy_conn.closed:
+                    proxy_conn.close()
+                return
+
             try:
                 if http_client.closed:
                     if proxy_conn and not proxy_conn.closed:
@@ -304,10 +305,11 @@ class Tapper:
                             logger.info(self.log_message(
                                 f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                     await asyncio.sleep(delay=5)
-                await http_client.close()
-                if proxy_conn:
-                    if not proxy_conn.closed:
-                        proxy_conn.close()
+
+                if not http_client.closed:
+                    await http_client.close()
+                if proxy_conn and not proxy_conn.closed:
+                    proxy_conn.close()
 
             except InvalidSession as error:
                 raise error

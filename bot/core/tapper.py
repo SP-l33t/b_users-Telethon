@@ -117,7 +117,7 @@ class Tapper:
                 init_data = (f"user={user_data_encoded}&chat_instance={chat_instance}&chat_type={chat_type}&"
                              f"start_param={start_param}&auth_date={auth_date}&hash={hash_value}")
 
-                me = await self.tg_client.get_me()
+                me = await client.get_me()
                 self.tg_client_id = me.id
 
         return init_data

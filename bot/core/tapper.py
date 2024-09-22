@@ -71,75 +71,56 @@ class Tapper:
 
         self.tg_client.set_proxy(proxy_dict)
 
-        try:
-            if not self.tg_client.is_connected():
-                try:
-                    self.lock.acquire()
-                    await self.tg_client.start()
-                except (UnauthorizedError, AuthKeyUnregisteredError):
-                    raise InvalidSession(self.session_name)
-                except (UserDeactivatedError, UserDeactivatedBanError, PhoneNumberBannedError):
-                    raise InvalidSession(f"{self.session_name}: User is banned")
+        init_data = None
+        with self.lock:
+            async with self.tg_client as client:
+                while True:
+                    try:
+                        resolve_result = await client(contacts.ResolveUsernameRequest(username='b_usersbot'))
+                        peer = InputPeerUser(user_id=resolve_result.peer.user_id,
+                                             access_hash=resolve_result.users[0].access_hash)
+                        break
+                    except FloodWaitError as fl:
+                        fls = fl.seconds
 
-            while True:
-                try:
-                    resolve_result = await self.tg_client(contacts.ResolveUsernameRequest(username='b_usersbot'))
-                    peer = InputPeerUser(user_id=resolve_result.peer.user_id,
-                                         access_hash=resolve_result.users[0].access_hash)
-                    break
-                except FloodWaitError as fl:
-                    fls = fl.seconds
+                        logger.warning(self.log_message(f"FloodWait {fl}"))
+                        logger.info(self.log_message(f"Sleep {fls}s"))
+                        await asyncio.sleep(fls + 3)
 
-                    logger.warning(self.log_message(f"FloodWait {fl}"))
-                    logger.info(self.log_message(f"Sleep {fls}s"))
-                    await asyncio.sleep(fls + 3)
+                ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "ref-4LKnoTn1gnxdSFUDGoyBLr"
 
-            ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "ref-4LKnoTn1gnxdSFUDGoyBLr"
+                input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
+                input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="join")
 
-            input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
-            input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="join")
+                web_view = await client(messages.RequestAppWebViewRequest(
+                    peer=peer,
+                    app=input_bot_app,
+                    platform='android',
+                    write_allowed=True,
+                    start_param=ref_id
+                ))
 
-            web_view = await self.tg_client(messages.RequestAppWebViewRequest(
-                peer=peer,
-                app=input_bot_app,
-                platform='android',
-                write_allowed=True,
-                start_param=ref_id
-            ))
+                auth_url = web_view.url
+                tg_web_data = unquote(
+                    string=unquote(string=auth_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0]))
+                tg_web_data_parts = tg_web_data.split('&')
 
-            auth_url = web_view.url
-            tg_web_data = unquote(
-                string=unquote(string=auth_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0]))
-            tg_web_data_parts = tg_web_data.split('&')
+                user_data = tg_web_data_parts[0].split('=')[1]
+                chat_instance = tg_web_data_parts[1].split('=')[1]
+                chat_type = tg_web_data_parts[2].split('=')[1]
+                start_param = tg_web_data_parts[3].split('=')[1]
+                auth_date = tg_web_data_parts[4].split('=')[1]
+                hash_value = tg_web_data_parts[5].split('=')[1]
 
-            user_data = tg_web_data_parts[0].split('=')[1]
-            chat_instance = tg_web_data_parts[1].split('=')[1]
-            chat_type = tg_web_data_parts[2].split('=')[1]
-            start_param = tg_web_data_parts[3].split('=')[1]
-            auth_date = tg_web_data_parts[4].split('=')[1]
-            hash_value = tg_web_data_parts[5].split('=')[1]
+                user_data_encoded = quote(user_data)
 
-            user_data_encoded = quote(user_data)
+                init_data = (f"user={user_data_encoded}&chat_instance={chat_instance}&chat_type={chat_type}&"
+                             f"start_param={start_param}&auth_date={auth_date}&hash={hash_value}")
 
-            init_data = (f"user={user_data_encoded}&chat_instance={chat_instance}&chat_type={chat_type}&"
-                         f"start_param={start_param}&auth_date={auth_date}&hash={hash_value}")
+                me = await self.tg_client.get_me()
+                self.tg_client_id = me.id
 
-            me = await self.tg_client.get_me()
-            self.tg_client_id = me.id
-
-            if self.tg_client.is_connected():
-                await self.tg_client.disconnect()
-                if self.lock.acquired:
-                    self.lock.release()
-
-            return init_data
-
-        except InvalidSession as error:
-            return None
-
-        except Exception as error:
-            log_error(self.log_message(f"Unknown error: {error}"))
-            return None
+        return init_data
 
     @error_handler
     async def make_request(self, http_client: aiohttp.ClientSession, method, endpoint=None, url=None, **kwargs):
@@ -163,21 +144,18 @@ class Tapper:
         if path == 'money':
             return
 
-        async with self.tg_client as client:
-
-            if path.startswith('+'):
+        with self.lock:
+            async with self.tg_client as client:
                 try:
-                    invite_hash = path[1:]
-                    result = await client(messages.ImportChatInviteRequest(hash=invite_hash))
-                    logger.info(self.log_message(f"Joined to channel: <y>{result.chats[0].title}</y>"))
-                    await asyncio.sleep(random.uniform(10, 20))
+                    if path.startswith('+'):
+                        invite_hash = path[1:]
+                        result = await client(messages.ImportChatInviteRequest(hash=invite_hash))
+                        channel_title = result.chats[0].title
+                    else:
+                        await client(channels.JoinChannelRequest(channel=f'@{path}'))
+                        channel_title = path
 
-                except Exception as e:
-                    log_error(self.log_message(f"(Task) Error while join tg channel: {e}"))
-            else:
-                try:
-                    await client(channels.JoinChannelRequest(channel=f'@{path}'))
-                    logger.info(self.log_message(f"Joined to channel: <y>{link}</y>"))
+                    logger.info(self.log_message(f"Joined to channel: <y>{channel_title}</y>"))
                 except Exception as e:
                     log_error(self.log_message(f"(Task) Error while join tg channel: {e}"))
 
@@ -299,6 +277,7 @@ class Tapper:
                         if task.get('type') == 'SUBSCRIPTION_TG' and settings.SUBSCRIBE_CHANNEL_TASKS:
                             logger.info(self.log_message(f"Performing TG subscription to <lc>{task['link']}</lc>"))
                             await self.join_and_mute_tg_channel(task['link'])
+                            await asyncio.sleep(random.uniform(10, 20))
 
                         result = await self.done_task(http_client=http_client, task_id=task['uuid'])
                         if result:

@@ -279,7 +279,7 @@ class Tapper:
                     f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>"))
                 tasks = await self.get_task(http_client=http_client)
                 for task in tasks.get('response', {}):
-                    if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG"]:
+                    if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET"]:
                         logger.info(self.log_message(f"Performing task <lc>{task['taskName']}</lc>..."))
                         if task.get('type') == 'REGEX_STRING':
                             result = await self.add_gem_last_name(http_client=http_client, task_id=task['uuid'])

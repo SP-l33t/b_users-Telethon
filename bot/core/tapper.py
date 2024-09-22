@@ -9,11 +9,11 @@ from urllib.parse import unquote, quote
 from aiocfscrape import CloudflareScraper
 from aiohttp_proxy import ProxyConnector
 from better_proxy import Proxy
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from telethon import TelegramClient
 from telethon.errors import *
-from telethon.types import InputUser, InputBotAppShortName, InputPeerUser
+from telethon.types import InputUser, InputBotAppShortName, InputPeerUser, InputNotifyPeer, InputPeerNotifySettings
 from telethon.functions import messages, contacts, channels, account
 
 from .agents import generate_random_user_agent
@@ -151,13 +151,26 @@ class Tapper:
                         invite_hash = path[1:]
                         result = await client(messages.ImportChatInviteRequest(hash=invite_hash))
                         channel_title = result.chats[0].title
+                        entity = result.chats[0]
                     else:
-                        await client(channels.JoinChannelRequest(channel=f'@{path}'))
-                        channel_title = path
+                        entity = await client.get_entity(f'@{path}')
+                        await client(channels.JoinChannelRequest(channel=entity))
+                        channel_title = entity.title
 
-                    logger.info(self.log_message(f"Joined to channel: <y>{channel_title}</y>"))
+                    await asyncio.sleep(1)
+
+                    await client(account.UpdateNotifySettingsRequest(
+                        peer=InputNotifyPeer(entity),
+                        settings=InputPeerNotifySettings(
+                            show_previews=False,
+                            silent=True,
+                            mute_until=datetime.today() + timedelta(days=365)
+                        )
+                    ))
+
+                    logger.info(self.log_message(f"Subscribe to channel: <y>{channel_title}</y>"))
                 except Exception as e:
-                    log_error(self.log_message(f"(Task) Error while join tg channel: {e}"))
+                    log_error(self.log_message(f"(Task) Error while subscribing to tg channel: {e}"))
 
     @error_handler
     async def add_gem_last_name(self, http_client: aiohttp.ClientSession, task_id: str):

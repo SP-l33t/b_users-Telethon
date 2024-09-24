@@ -49,6 +49,8 @@ class Tapper:
         self.headers['User-Agent'] = self.check_user_agent()
         self.headers.update(**get_sec_ch_ua(self.headers.get('User-Agent', '')))
 
+        self._webview_data = None
+
     def log_message(self, message) -> str:
         return f"<light-yellow>{self.session_name}</light-yellow> | {message}"
 
@@ -74,27 +76,27 @@ class Tapper:
         init_data = None
         with self.lock:
             async with self.tg_client as client:
-                while True:
-                    try:
-                        resolve_result = await client(contacts.ResolveUsernameRequest(username='b_usersbot'))
-                        peer = InputPeerUser(user_id=resolve_result.peer.user_id,
-                                             access_hash=resolve_result.users[0].access_hash)
-                        break
-                    except FloodWaitError as fl:
-                        fls = fl.seconds
+                if not self._webview_data:
+                    while True:
+                        try:
+                            resolve_result = await client(contacts.ResolveUsernameRequest(username='b_usersbot'))
+                            user = resolve_result.users[0]
+                            peer = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+                            input_user = InputUser(user_id=user.id, access_hash=user.access_hash)
+                            input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="join")
+                            self._webview_data = {'peer': peer, 'app': input_bot_app}
+                            break
+                        except FloodWaitError as fl:
+                            fls = fl.seconds
 
-                        logger.warning(self.log_message(f"FloodWait {fl}"))
-                        logger.info(self.log_message(f"Sleep {fls}s"))
-                        await asyncio.sleep(fls + 3)
+                            logger.warning(self.log_message(f"FloodWait {fl}"))
+                            logger.info(self.log_message(f"Sleep {fls}s"))
+                            await asyncio.sleep(fls + 3)
 
                 ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "ref-4LKnoTn1gnxdSFUDGoyBLr"
 
-                input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
-                input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="join")
-
                 web_view = await client(messages.RequestAppWebViewRequest(
-                    peer=peer,
-                    app=input_bot_app,
+                    **self._webview_data,
                     platform='android',
                     write_allowed=True,
                     start_param=ref_id
@@ -103,14 +105,13 @@ class Tapper:
                 auth_url = web_view.url
                 tg_web_data = unquote(
                     string=unquote(string=auth_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0]))
-                tg_web_data_parts = tg_web_data.split('&')
 
-                user_data = tg_web_data_parts[0].split('=')[1]
-                chat_instance = tg_web_data_parts[1].split('=')[1]
-                chat_type = tg_web_data_parts[2].split('=')[1]
-                start_param = tg_web_data_parts[3].split('=')[1]
-                auth_date = tg_web_data_parts[4].split('=')[1]
-                hash_value = tg_web_data_parts[5].split('=')[1]
+                user_data = re.findall(r'user=([^&]+)', tg_web_data)[0]
+                chat_instance = re.findall(r'chat_instance=([^&]+)', tg_web_data)[0]
+                chat_type = re.findall(r'chat_type=([^&]+)', tg_web_data)[0]
+                start_param = re.findall(r'start_param=([^&]+)', tg_web_data)[0]
+                auth_date = re.findall(r'auth_date=([^&]+)', tg_web_data)[0]
+                hash_value = re.findall(r'hash=([^&]+)', tg_web_data)[0]
 
                 user_data_encoded = quote(user_data)
 
@@ -202,14 +203,15 @@ class Tapper:
     async def done_task(self, http_client: aiohttp.ClientSession, task_id: str):
         return await self.make_request(http_client, 'POST', endpoint="/tasks", json={'uuid': task_id})
 
-    async def check_proxy(self, http_client: aiohttp.ClientSession, proxy: str) -> bool:
+    async def check_proxy(self, http_client: aiohttp.ClientSession) -> bool:
+        proxy_conn = http_client._connector
         try:
-            response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(5))
-            ip = (await response.json()).get('origin')
-            logger.info(self.log_message(f"Proxy IP: {ip}"))
+            response = await http_client.get(url='https://ifconfig.me/ip', timeout=aiohttp.ClientTimeout(15))
+            logger.info(self.log_message(f"Proxy IP: {await response.text()}"))
             return True
         except Exception as error:
-            log_error(self.log_message(f"Proxy: {proxy} | Error: {error}"))
+            proxy_url = f"{proxy_conn._proxy_type}://{proxy_conn._proxy_host}:{proxy_conn._proxy_port}"
+            log_error(self.log_message(f"Proxy: {proxy_url} | Error: {type(error).__name__}"))
             return False
 
     async def run(self) -> None:
@@ -218,101 +220,90 @@ class Tapper:
             logger.info(self.log_message(f"Bot will start in <lc>{random_delay}s</lc>"))
             await asyncio.sleep(random_delay)
 
-        proxy_conn = None
-        if self.proxy:
-            proxy_conn = ProxyConnector().from_url(self.proxy)
-            http_client = CloudflareScraper(headers=self.headers, connector=proxy_conn)
-            p_type = proxy_conn._proxy_type
-            p_host = proxy_conn._proxy_host
-            p_port = proxy_conn._proxy_port
-            if not await self.check_proxy(http_client=http_client, proxy=f"{p_type}://{p_host}:{p_port}"):
-                return
-        else:
-            http_client = CloudflareScraper(headers=self.headers)
+        access_token_created_time = 0
+        tg_web_data = None
+
+        token_ttl = 3600
 
         while True:
-
-            init_data = await self.get_tg_web_data()
-
-            if not init_data:
-                if not http_client.closed:
-                    await http_client.close()
-                if proxy_conn and not proxy_conn.closed:
-                    proxy_conn.close()
-                return
-
-            try:
-                if http_client.closed:
-                    if proxy_conn and not proxy_conn.closed:
-                        proxy_conn.close()
-
-                    proxy_conn = ProxyConnector().from_url(self.proxy) if self.proxy else None
-                    http_client = aiohttp.ClientSession(headers=self.headers, connector=proxy_conn)
-
-                login = await self.login(http_client=http_client, init_data=init_data)
-                if not login:
-                    logger.info(self.log_message(f"💎 <lc>Login failed</lc>"))
+            proxy_conn = {'connector': ProxyConnector.from_url(self.proxy)} if self.proxy else {}
+            async with CloudflareScraper(headers=self.headers, timeout=aiohttp.ClientTimeout(60), **proxy_conn) as http_client:
+                if not await self.check_proxy(http_client=http_client):
+                    logger.warning(self.log_message('Failed to connect to proxy server. Sleep 5 minutes.'))
                     await asyncio.sleep(300)
-                    logger.info(self.log_message(f"Sleep <lc>300s</lc>"))
                     continue
 
-                if login.get('response', {}).get('isNewUser', False):
-                    logger.info(self.log_message(f'💎 <lc>User registered!</lc>'))
+                try:
+                    if time() - access_token_created_time >= token_ttl:
+                        tg_web_data = await self.get_tg_web_data()
 
-                accessToken = login.get('response', {}).get('accessToken')
-                logger.info(self.log_message(f"💎 <lc>Login successful</lc>"))
+                    if not tg_web_data:
+                        raise InvalidSession('Failed to get webview URL')
 
-                http_client.headers["Authorization"] = f"Bearer {accessToken}"
-                user_data = await self.info(http_client=http_client)
-                user_info = user_data.get('response', {}).get('user', {})
-                time_left = max(user_info.get('deathDate') - time(), 0)
-                time_left_formatted = str(timedelta(seconds=int(time_left)))
-                if ',' in time_left_formatted:
-                    days, time_ = time_left_formatted.split(',')
-                    days = days.split()[0] + 'd'
-                else:
-                    days = '0d'
-                    time_ = time_left_formatted
-                hours, minutes, seconds = time_.split(':')
-                formatted_time = f"{days[:-1]}d{hours}h {minutes}m {seconds}s"
-                logger.info(self.log_message(
-                    f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>"))
-                tasks = await self.get_task(http_client=http_client)
-                for task in tasks.get('response', {}):
-                    if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET"]:
-                        logger.info(self.log_message(f"Performing task <lc>{task['taskName']}</lc>..."))
-                        if task.get('type') == 'REGEX_STRING':
-                            result = await self.add_gem_last_name(http_client=http_client, task_id=task['uuid'])
+                    login_data = await self.login(http_client=http_client, init_data=tg_web_data)
+                    if not login_data:
+                        logger.info(self.log_message(f"💎 <lc>Login failed</lc>"))
+                        await asyncio.sleep(300)
+                        logger.info(self.log_message(f"Sleep <lc>300s</lc>"))
+                        continue
+
+                    if login_data.get('response', {}).get('isNewUser', False):
+                        logger.info(self.log_message(f'💎 <lc>User registered!</lc>'))
+
+                    access_token = login_data.get('response', {}).get('accessToken')
+                    logger.info(self.log_message(f"💎 <lc>Login successful</lc>"))
+
+                    http_client.headers["Authorization"] = f"Bearer {access_token}"
+                    user_data = await self.info(http_client=http_client)
+                    user_info = user_data.get('response', {}).get('user', {})
+                    time_left = max(user_info.get('deathDate') - time(), 0)
+                    time_left_formatted = str(timedelta(seconds=int(time_left)))
+                    if ',' in time_left_formatted:
+                        days, time_ = time_left_formatted.split(',')
+                        days = days.split()[0] + 'd'
+                    else:
+                        days = '0d'
+                        time_ = time_left_formatted
+                    hours, minutes, seconds = time_.split(':')
+                    formatted_time = f"{days[:-1]}d{hours}h {minutes}m {seconds}s"
+                    logger.info(self.log_message(
+                        f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>"))
+                    tasks = await self.get_task(http_client=http_client)
+                    for task in tasks.get('response', {}):
+                        if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET", "SEND_SIMPLE_TON_TRX"]:
+                            if task.get('type') == 'SUBSCRIPTION_TG' and not settings.SUBSCRIBE_CHANNEL_TASKS:
+                                continue
+
+                            if task.get('type') == 'REGEX_STRING':
+                                logger.info(self.log_message(f"Performing task <lc>{task['taskName']}</lc>..."))
+                                result = await self.add_gem_last_name(http_client=http_client, task_id=task['uuid'])
+                                if result:
+                                    logger.info(self.log_message(f"Task <lc>{task.get('taskName')}</lc> completed! | "
+                                                                 f"Reward: <lc>+{task.get('secondsAmount')}</lc>"))
+                                continue
+
+                            if task.get('type') == 'SUBSCRIPTION_TG':
+                                logger.info(self.log_message(f"Performing TG subscription to <lc>{task['link']}</lc>"))
+                                await self.join_and_mute_tg_channel(task['link'])
+                                await asyncio.sleep(random.uniform(10, 20))
+
+                            result = (await self.done_task(http_client=http_client, task_id=task['uuid'])).get('response', {}).get('isCompleted', False)
                             if result:
-                                logger.info(self.log_message(f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
-                            continue
+                                logger.info(self.log_message(
+                                    f"Task <lc>{task.get('taskName')}</lc> completed! | "
+                                    f"Reward: <lc>+{task.get('secondsAmount')}</lc>"))
+                        await asyncio.sleep(delay=5)
 
-                        if task.get('type') == 'SUBSCRIPTION_TG' and settings.SUBSCRIBE_CHANNEL_TASKS:
-                            logger.info(self.log_message(f"Performing TG subscription to <lc>{task['link']}</lc>"))
-                            await self.join_and_mute_tg_channel(task['link'])
-                            await asyncio.sleep(random.uniform(10, 20))
+                except InvalidSession as error:
+                    raise error
 
-                        result = await self.done_task(http_client=http_client, task_id=task['uuid'])
-                        if result:
-                            logger.info(self.log_message(
-                                f"Task <lc>{task.get('taskName')}</lc> completed! | Reward: <lc>+{task.get('secondsAmount')}</lc>"))
-                    await asyncio.sleep(delay=5)
+                except Exception as error:
+                    log_error(self.log_message(f"Unknown error: {error}"))
+                    await asyncio.sleep(random.uniform(60, 120))
 
-                if not http_client.closed:
-                    await http_client.close()
-                if proxy_conn and not proxy_conn.closed:
-                    proxy_conn.close()
-
-            except InvalidSession as error:
-                raise error
-
-            except Exception as error:
-                log_error(self.log_message(f"Unknown error: {error}"))
-                await asyncio.sleep(delay=3)
-
-            sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-            logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
-            await asyncio.sleep(delay=sleep_time)
+                sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
+                logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
+                await asyncio.sleep(delay=sleep_time)
 
 
 async def run_tapper(tg_client: TelegramClient):

@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     SLEEP_TIME: list[int] = [1800, 3600]
 
     SUBSCRIBE_CHANNEL_TASKS: bool = True
+    CHANGE_NAME_TASKS: bool = True
 
     SESSIONS_PER_PROXY: int = 1
     USE_PROXY_FROM_FILE: bool = True

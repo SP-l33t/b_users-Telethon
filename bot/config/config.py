@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     REF_ID: str = "ref-4LKnoTn1gnxdSFUDGoyBLr"
     USE_RANDOM_DELAY_IN_RUN: bool = True
     RANDOM_DELAY_IN_RUN: list[int] = [0, 30]
-    SLEEP_TIME: list[int] = [1800, 3600]
+    SLEEP_TIME: list[int] = [3600, 10800]
 
     SUBSCRIBE_CHANNEL_TASKS: bool = True
     CHANGE_NAME_TASKS: bool = True

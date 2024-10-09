@@ -10,12 +10,11 @@ from better_proxy import Proxy
 from datetime import datetime, timedelta
 from time import time
 
-from telethon import TelegramClient
+from opentele.tl import TelegramClient
 from telethon.errors import *
 from telethon.types import InputBotAppShortName, InputNotifyPeer, InputPeerNotifySettings, InputUser
 from telethon.functions import messages, channels, account
 
-from .agents import generate_random_user_agent
 from bot.config import settings
 from typing import Callable
 from bot.utils import logger, log_error, proxy_utils, config_utils, AsyncInterProcessLock, CONFIG_PATH
@@ -46,7 +45,7 @@ class Tapper:
 
         session_config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
 
-        if not all(key in session_config for key in ('api_id', 'api_hash', 'user_agent')):
+        if not all(key in session_config for key in ('api', 'user_agent')):
             logger.critical(self.log_message('CHECK accounts_config.json as it might be corrupted'))
             exit(-1)
 
@@ -186,7 +185,7 @@ class Tapper:
                         )
                     ))
 
-                    logger.info(self.log_message(f"Subscribe to channel: <y>{channel_title}</y>"))
+                    logger.info(self.log_message(f"Subscribed to channel: <y>{channel_title}</y>"))
                 except Exception as e:
                     log_error(self.log_message(f"(Task) Error while subscribing to tg channel: {e}"))
 
@@ -322,16 +321,16 @@ class Tapper:
                                     f"Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                         await asyncio.sleep(delay=5)
 
+                    sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
+                    logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
+                    await asyncio.sleep(delay=sleep_time)
+
                 except InvalidSession:
                     raise
 
                 except Exception as error:
                     log_error(self.log_message(f"Unknown error: {error}"))
                     await asyncio.sleep(random.uniform(60, 120))
-
-                sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-                logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
-                await asyncio.sleep(delay=sleep_time)
 
 
 async def run_tapper(tg_client: TelegramClient):

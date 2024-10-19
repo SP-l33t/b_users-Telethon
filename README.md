@@ -7,13 +7,18 @@
 > 🇷 🇺 README in russian available [here](README-RU.md)
 
 ## Features  
-|            Feature            | Supported |
-|:-----------------------------:|:---------:|
-|        Multithreading         |     ✅     |
-|   Proxy binding to session    |     ✅     |
-|         Auto Referral         |     ✅     |
-|        Auto Claim Task        |     ✅     |
-| Support for telethon .session |     ✅     |
+|                 Feature                 | Supported |
+|:---------------------------------------:|:---------:|
+|             Multithreading              |     ✅     |
+|        Proxy binding to session         |     ✅     |
+|              Auto Referral              |     ✅     |
+|             Auto Claim Task             |     ✅     |
+| Supports telethon AND pyrogram .session |     ✅     |
+
+_Script searches for session files in the following folders:_
+* /sessions
+* /sessions/pyrogram
+* /session/telethon
 
 
 ## [Settings](https://github.com/GravelFire/MajorBot/blob/main/.env-example/)
@@ -21,6 +26,7 @@
 |:---------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
 |    **API_ID / API_HASH**    |                                                                                   Platform data from which to run the Telegram session (default - android)                                                                                    |
 |   **GLOBAL_CONFIG_PATH**    | Specifies the global path for accounts_config, proxies, sessions. <br/>Specify an absolute path or use an environment variable (default environment variable: **TG_FARM**) <br/>If no environment variable exists, uses the script directory. |
+|        **FIX_CERT**         |                                                                                           Try to fix  SSLCertVerificationError ( True / **False** )                                                                                           |
 |         **REF_ID**          |                                                                                              Your referral id after startapp= (Your telegram ID)                                                                                              |
 | **USE_RANDOM_DELAY_IN_RUN** |                                                                                           Whether to use random delay at startup (**True** / False)                                                                                           |
 |   **RANDOM_DELAY_IN_RUN**   |                                                                                                    Random delay at startup (e.g. [0, 15])                                                                                                     |

@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     API_HASH: str
     GLOBAL_CONFIG_PATH: str = "TG_FARM"
 
+    FIX_CERT: bool = False
+
     REF_ID: str = "ref-4LKnoTn1gnxdSFUDGoyBLr"
     USE_RANDOM_DELAY_IN_RUN: bool = True
     RANDOM_DELAY_IN_RUN: list[int] = [0, 30]

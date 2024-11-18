@@ -11,8 +11,7 @@ class Settings(BaseSettings):
     FIX_CERT: bool = False
 
     REF_ID: str = "ref-4LKnoTn1gnxdSFUDGoyBLr"
-    USE_RANDOM_DELAY_IN_RUN: bool = True
-    RANDOM_DELAY_IN_RUN: list[int] = [0, 30]
+    SESSION_START_DELAY: int = 360
     SLEEP_TIME: list[int] = [3600, 10800]
 
     SUBSCRIBE_CHANNEL_TASKS: bool = True

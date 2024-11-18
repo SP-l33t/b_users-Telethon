@@ -1,34 +1,23 @@
 import aiohttp
 import asyncio
-import functools
 import json
-import random
-import re
-from urllib.parse import unquote, quote, parse_qs
+from urllib.parse import unquote, parse_qs
 from aiocfscrape import CloudflareScraper
 from aiohttp_proxy import ProxyConnector
 from better_proxy import Proxy
 from datetime import timedelta
 from time import time
+from random import randint, uniform
 
 from bot.utils.universal_telegram_client import UniversalTelegramClient
 
 from bot.config import settings
-from typing import Callable
 from bot.utils import logger, log_error, config_utils, CONFIG_PATH, first_run
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
-
-def error_handler(func: Callable):
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except Exception as e:
-            await asyncio.sleep(1)
-
-    return wrapper
+BASE_URL = "https://api.billion.tg/api/v1"
+SKIPPED_TASKS = ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET", "SEND_SIMPLE_TON_TRX"]
 
 
 class Tapper:
@@ -64,43 +53,32 @@ class Tapper:
     async def get_tg_web_data(self) -> str:
         webview_url = await self.tg_client.get_app_webview_url('b_usersbot', "join", "ref-4LKnoTn1gnxdSFUDGoyBLr")
 
-        tg_web_data = parse_qs(unquote(
-            string=unquote(string=webview_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0])))
+        init_data = unquote(webview_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0])
+        tg_web_data = parse_qs(init_data)
         self.user_data = json.loads(tg_web_data.get('user', [''])[0])
 
-        user_data = tg_web_data.get('user', [''])[0]
-        chat_instance = tg_web_data.get('chat_instance', [''])[0]
-        chat_type = tg_web_data.get('chat_type', [''])[0]
-        start_param = tg_web_data.get('start_param', [''])[0]
-        auth_date = tg_web_data.get('auth_date', [''])[0]
-        hash_value = tg_web_data.get('hash', [''])[0]
+        return init_data
 
-        user_data_encoded = quote(user_data)
-        start_param_str = f"&start_param={start_param}" if start_param else ""
-
-        print(f"user={user_data_encoded}&chat_instance={chat_instance}&chat_type={chat_type}{start_param_str}" \
-               f"&auth_date={auth_date}&hash={hash_value}")
-        return f"user={user_data_encoded}&chat_instance={chat_instance}&chat_type={chat_type}{start_param_str}" \
-               f"&auth_date={auth_date}&hash={hash_value}"
-
-    @error_handler
-    async def make_request(self, http_client: CloudflareScraper, method, endpoint=None, url=None, **kwargs):
-        full_url = url or f"https://api.billion.tg/api/v1{endpoint or ''}"
+    async def make_request(self, http_client: CloudflareScraper, method, endpoint="", url=None, **kwargs):
+        full_url = url or f"{BASE_URL}{endpoint}"
         response = await http_client.request(method, full_url, **kwargs)
-        response.raise_for_status()
-        return await response.json()
+        if response.status in range(200, 300):
+            return await response.json() if 'json' in response.content_type else await response.text()
+        else:
+            error_json = await response.json() if 'json' in response.content_type else {}
+            error_text = f"Error: {error_json}" if error_json else ""
+            logger.warning(self.log_message(
+                f"{method} Request to {full_url} failed with {response.status} code. {error_text}"))
+            return error_json
 
-    @error_handler
     async def login(self, http_client: CloudflareScraper, init_data):
         http_client.headers["Tg-Auth"] = init_data
         user = await self.make_request(http_client, 'GET', endpoint="/auth/login")
         return user
 
-    @error_handler
     async def info(self, http_client: CloudflareScraper):
         return await self.make_request(http_client, 'GET', endpoint="/users/me")
 
-    @error_handler
     async def add_gem_first_name(self, http_client: CloudflareScraper, task_id: str):
         if '💎' not in self.user_data.get('first_name'):
             await self.tg_client.update_profile(first_name=f"{self.user_data.get('first_name')} 💎")
@@ -108,16 +86,14 @@ class Tapper:
             self.user_data['first_name'] = self.user_data.get('first_name').replace("💎", "").strip()
 
         result = await self.done_task(http_client=http_client, task_id=task_id)
-        await asyncio.sleep(random.uniform(5, 10))
+        await asyncio.sleep(uniform(5, 10))
         await self.tg_client.update_profile(first_name=self.user_data.get('first_name'))
 
         return result
 
-    @error_handler
     async def get_task(self, http_client: CloudflareScraper) -> dict:
         return await self.make_request(http_client, 'GET', endpoint="/tasks")
 
-    @error_handler
     async def done_task(self, http_client: CloudflareScraper, task_id: str):
         return await self.make_request(http_client, 'POST', endpoint="/tasks", json={'uuid': task_id})
 
@@ -136,10 +112,9 @@ class Tapper:
             return False
 
     async def run(self) -> None:
-        if settings.USE_RANDOM_DELAY_IN_RUN:
-            random_delay = random.uniform(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-            logger.info(self.log_message(f"Bot will start in <lc>{int(random_delay)}s</lc>"))
-            await asyncio.sleep(random_delay)
+        random_delay = uniform(1, settings.SESSION_START_DELAY)
+        logger.info(self.log_message(f"Bot will start in <lr>{int(random_delay)}s</lr>"))
+        await asyncio.sleep(delay=random_delay)
 
         access_token_created_time = 0
         tg_web_data = None
@@ -191,11 +166,14 @@ class Tapper:
                         time_ = time_left_formatted
                     hours, minutes, seconds = time_.split(':')
                     formatted_time = f"{days[:-1]}d{hours}h {minutes}m {seconds}s"
+                    is_alive = user_info.get('isAlive', True)
                     logger.info(self.log_message(
-                        f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{user_info.get('isAlive')}</lc>"))
+                        f"Left: <lc>{formatted_time}</lc> seconds | Alive: <lc>{is_alive}</lc>"))
+                    if not is_alive:
+                        return
                     tasks = await self.get_task(http_client=http_client)
                     for task in tasks.get('response', {}):
-                        if not task.get('isCompleted') and task.get('type') not in ["INVITE_FRIENDS", "BOOST_TG", "CONNECT_WALLET", "SEND_SIMPLE_TON_TRX"]:
+                        if not task.get('isCompleted') and task.get('type') not in SKIPPED_TASKS:
                             if task.get('type') == 'SUBSCRIPTION_TG' and not settings.SUBSCRIBE_CHANNEL_TASKS:
                                 continue
 
@@ -218,7 +196,7 @@ class Tapper:
                                     f"Reward: <lc>+{task.get('secondsAmount')}</lc>"))
                         await asyncio.sleep(delay=5)
 
-                    sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
+                    sleep_time = uniform(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
                     logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
                     await asyncio.sleep(delay=sleep_time)
 
@@ -226,8 +204,9 @@ class Tapper:
                     raise
 
                 except Exception as error:
-                    log_error(self.log_message(f"Unknown error: {error}"))
-                    await asyncio.sleep(random.uniform(60, 120))
+                    sleep_time = uniform(60, 120)
+                    log_error(self.log_message(f"Unknown error: {error}. Sleeping {int(sleep_time)} seconds"))
+                    await asyncio.sleep(sleep_time)
 
 
 async def run_tapper(tg_client: UniversalTelegramClient):
